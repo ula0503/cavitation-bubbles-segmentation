@@ -1,0 +1,5 @@
+__pycache__/
+cavitation_env/
+video_results/
+*.pt
+.env
