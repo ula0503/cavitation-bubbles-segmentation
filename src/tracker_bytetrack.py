@@ -2,15 +2,6 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 import math
 
-import numpy as np
-from scipy.optimize import linear_sum_assignment
-import math
-
-import numpy as np
-from scipy.optimize import linear_sum_assignment
-import math
-
-
 def iou(bbox1, bbox2):
     """
     Вычисляет IoU (Intersection over Union) для двух bounding box.
