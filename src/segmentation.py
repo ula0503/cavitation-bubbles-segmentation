@@ -22,8 +22,8 @@ class YoloSegmenter:
         """
         results = self.model(
             frame,
-            conf=0.30,  # Порог уверенности детекции
-            iou=0.40,  # Порог IoU для NMS
+            conf=0.15,  # Порог уверенности детекции
+            iou=0.30,  # Порог IoU для NMS
             imgsz=1280,  # Размер изображения для инференса
             retina_masks=True,  # высококачественные маски
             agnostic_nms=False,
