@@ -4,6 +4,7 @@ import tempfile
 import os
 import uuid
 import pandas as pd
+import numpy as np
 from datetime import datetime
 
 # Настройка страницы
@@ -76,6 +77,104 @@ def prepare_video_format(input_path, filename):
     return temp_mp4_path, mp4_filename
 
 
+def analyze_bubble_statistics(csv_file_path):
+    """Анализ статистики пузырьков из CSV файла"""
+    df = pd.read_csv(csv_file_path)
+
+    results = []
+
+    for tracker_id, group in df.groupby("tracker_id"):
+        if len(group) < 2:
+            continue
+
+        track_data = {
+            "tracker_id": tracker_id,
+            "avg_area": group["area"].mean(),
+            "std_area": group["area"].std(),
+            "initial_area": group["area"].iloc[0],
+            "final_area": group["area"].iloc[-1],
+            "max_area": group["area"].max(),
+            "min_area": group["area"].min(),
+            "avg_speed": group["speed_px_per_sec"].mean(),
+            "max_speed": group["speed_px_per_sec"].max(),
+            "std_speed": group["speed_px_per_sec"].std(),
+            "lifetime": group["timestamp"].max() - group["timestamp"].min(),
+            "measurement_count": len(group),
+        }
+
+        nonzero_speeds = group[group["speed_px_per_sec"] > 0]["speed_px_per_sec"]
+        track_data["avg_nonzero_speed"] = (
+            nonzero_speeds.mean() if len(nonzero_speeds) > 0 else 0
+        )
+
+        if track_data["initial_area"] > 0:
+            track_data["area_change_ratio"] = (
+                track_data["final_area"] - track_data["initial_area"]
+            ) / track_data["initial_area"]
+        else:
+            track_data["area_change_ratio"] = 0
+
+        if track_data["avg_speed"] > 0:
+            track_data["speed_variation"] = (
+                track_data["std_speed"] / track_data["avg_speed"]
+            )
+        else:
+            track_data["speed_variation"] = 0
+
+        results.append(track_data)
+
+    bubble_stats = pd.DataFrame(results).round(3)
+
+    if len(bubble_stats) > 0:
+        overall_stats = {
+            "total_bubbles": len(bubble_stats),
+            "avg_lifetime": bubble_stats["lifetime"].mean(),
+            "std_lifetime": bubble_stats["lifetime"].std(),
+            "avg_area_all": bubble_stats["avg_area"].mean(),
+            "avg_speed_all": bubble_stats["avg_speed"].mean(),
+            "avg_nonzero_speed_all": bubble_stats["avg_nonzero_speed"].mean(),
+            "max_speed_all": bubble_stats["max_speed"].max(),
+        }
+    else:
+        overall_stats = {}
+
+    return bubble_stats, overall_stats
+
+
+def save_statistics_report(bubble_stats, overall_stats, output_dir, report_name):
+    """Сохраняет финальный отчет в папку"""
+    reports_dir = os.path.join(output_dir, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
+
+    stats_csv_path = os.path.join(reports_dir, f"{report_name}_detailed_stats.csv")
+    bubble_stats.to_csv(stats_csv_path, index=False)
+
+    overall_stats_path = os.path.join(reports_dir, f"{report_name}_overall_stats.csv")
+    overall_df = pd.DataFrame([overall_stats])
+    overall_df.to_csv(overall_stats_path, index=False)
+
+    report_path = os.path.join(reports_dir, f"{report_name}_summary.txt")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("ОТЧЕТ ПО АНАЛИЗУ КАВИТАЦИОННЫХ ПУЗЫРЬКОВ\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Общее количество пузырьков: {overall_stats['total_bubbles']}\n")
+        f.write(f"Среднее время жизни: {overall_stats['avg_lifetime']:.2f} сек\n")
+        f.write(
+            f"Стандартное отклонение времени жизни: {overall_stats['std_lifetime']:.2f} сек\n"
+        )
+        f.write(f"Средняя площадь: {overall_stats['avg_area_all']:.1f} px²\n")
+        f.write(f"Средняя скорость: {overall_stats['avg_speed_all']:.1f} px/сек\n")
+        f.write(
+            f"Средняя скорость (без нулей): {overall_stats['avg_nonzero_speed_all']:.1f} px/сек\n"
+        )
+        f.write(f"Максимальная скорость: {overall_stats['max_speed_all']:.1f} px/сек\n")
+        f.write(
+            f"\nДата создания отчета: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+
+    return stats_csv_path, overall_stats_path, report_path
+
+
 # Основные папки для результатов
 VIDEO_RESULTS_DIR = "video_results"
 BATCH_RESULTS_DIR = "batch_processing"
@@ -93,21 +192,18 @@ with single_tab:
 
         if st.button("Запустить обработку"):
             with st.spinner("Обработка видео..."):
-                # Создаем папку для этого видео
                 video_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 video_session_dir = os.path.join(
                     VIDEO_RESULTS_DIR, f"video_{video_timestamp}"
                 )
                 os.makedirs(video_session_dir, exist_ok=True)
 
-                # Сохранение временного файла
                 with tempfile.NamedTemporaryFile(
                     delete=False, suffix=os.path.splitext(video_file.name)[1]
                 ) as temp_file:
                     temp_file.write(video_file.getvalue())
                     temp_path = temp_file.name
 
-                # Настройка путей для результатов
                 result_filename = (
                     f"processed_{os.path.splitext(video_file.name)[0]}.mp4"
                 )
@@ -117,7 +213,6 @@ with single_tab:
                 os.makedirs(charts_dir, exist_ok=True)
 
                 try:
-                    # Подготовка и обработка видео
                     processing_path, _ = prepare_video_format(
                         temp_path, video_file.name
                     )
@@ -127,7 +222,19 @@ with single_tab:
                         processing_path, result_path, data_path, charts_dir
                     )
 
-                    # Сохранение результатов
+                    bubble_stats, overall_stats = analyze_bubble_statistics(data_path)
+
+                    if not bubble_stats.empty:
+                        report_name = f"report_{os.path.splitext(video_file.name)[0]}"
+                        stats_csv_path, overall_stats_path, report_path = (
+                            save_statistics_report(
+                                bubble_stats,
+                                overall_stats,
+                                video_session_dir,
+                                report_name,
+                            )
+                        )
+
                     st.session_state.processed_files[video_file.name] = {
                         "video_output": result_path,
                         "data_file": data_path,
@@ -142,7 +249,6 @@ with single_tab:
                         f"Обработка завершена! Результаты в папке: {video_session_dir}"
                     )
 
-                    # Очистка временных файлов
                     if processing_path != temp_path:
                         os.unlink(processing_path)
 
@@ -151,7 +257,6 @@ with single_tab:
                 finally:
                     os.unlink(temp_path)
 
-    # Отображение результатов
     if st.session_state.current_video:
         current_results = st.session_state.processed_files[
             st.session_state.current_video
@@ -162,23 +267,46 @@ with single_tab:
         with left_column:
             if os.path.exists(current_results["video_output"]):
                 st.video(current_results["video_output"])
-                with open(current_results["video_output"], "rb") as video_file:
-                    st.download_button(
-                        "Скачать обработанное видео",
-                        video_file,
-                        current_results["output_name"],
-                    )
+                st.info(f"Видео сохранено: {current_results['video_output']}")
 
         with right_column:
             if os.path.exists(current_results["data_file"]):
                 data_frame = pd.read_csv(current_results["data_file"])
                 st.dataframe(data_frame.head(10))
-                with open(current_results["data_file"], "rb") as data_file:
-                    st.download_button(
-                        "Скачать данные анализа",
-                        data_file,
-                        f"analysis_{st.session_state.current_video}.csv",
-                    )
+
+                bubble_stats, overall_stats = analyze_bubble_statistics(
+                    current_results["data_file"]
+                )
+
+                if not bubble_stats.empty:
+                    st.info("### Статистика пузырьков:")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Всего пузырьков", overall_stats["total_bubbles"])
+                        st.metric(
+                            "Среднее время жизни",
+                            f"{overall_stats['avg_lifetime']:.2f} сек",
+                        )
+                        st.metric(
+                            "Средняя площадь",
+                            f"{overall_stats['avg_area_all']:.1f} px²",
+                        )
+                    with col2:
+                        st.metric(
+                            "Макс. скорость",
+                            f"{overall_stats['max_speed_all']:.1f} px/сек",
+                        )
+                        st.metric(
+                            "Средняя скорость",
+                            f"{overall_stats['avg_speed_all']:.1f} px/сек",
+                        )
+                        st.metric(
+                            "Скорость (без нулей)",
+                            f"{overall_stats['avg_nonzero_speed_all']:.1f} px/сек",
+                        )
+
+                    st.info("### Детальная статистика по пузырькам:")
+                    st.dataframe(bubble_stats)
 
             if current_results["speed_chart"] and os.path.exists(
                 current_results["speed_chart"]
@@ -193,8 +321,7 @@ with single_tab:
 with batch_tab:
     st.subheader("Обработка нескольких видео")
 
-    # Настройка папки для пакетной обработки
-    st.write("### Настройка папки для результатов")
+    st.write("### Настройка папке для результатов")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -202,7 +329,6 @@ with batch_tab:
     with col2:
         concentration = st.text_input("Концентрация раствора", "5%")
 
-    # Автоматическое название папки
     batch_timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     suggested_folder = f"{project_name}_{concentration}_{batch_timestamp}"
     batch_folder_name = st.text_input(
@@ -218,7 +344,6 @@ with batch_tab:
     if st.button("Запустить пакетную обработку"):
         if multiple_videos and batch_folder_name:
             with st.spinner(f"Обработка {len(multiple_videos)} видео..."):
-                # Создание структуры папок
                 main_dir = os.path.join(BATCH_RESULTS_DIR, batch_folder_name)
                 video_results_dir = os.path.join(main_dir, "processed_videos")
                 data_results_dir = os.path.join(main_dir, "analysis_data")
@@ -233,16 +358,15 @@ with batch_tab:
 
                 progress_indicator = st.progress(0)
                 processing_results = []
+                combined_data = []
 
                 for index, video in enumerate(multiple_videos):
-                    # Временное сохранение файла
                     with tempfile.NamedTemporaryFile(
                         delete=False, suffix=os.path.splitext(video.name)[1]
                     ) as temp_file:
                         temp_file.write(video.getvalue())
                         temp_video_path = temp_file.name
 
-                    # Настройка путей вывода
                     video_basename = os.path.splitext(video.name)[0]
                     output_video_path = os.path.join(
                         video_results_dir, f"processed_{video_basename}.mp4"
@@ -252,7 +376,6 @@ with batch_tab:
                     )
 
                     try:
-                        # Подготовка и обработка
                         processing_path, _ = prepare_video_format(
                             temp_video_path, video.name
                         )
@@ -265,16 +388,21 @@ with batch_tab:
                             chart_results_dir,
                         )
 
+                        if os.path.exists(output_data_path):
+                            video_data = pd.read_csv(output_data_path)
+                            video_data["source_video"] = video.name
+                            combined_data.append(video_data)
+                            os.remove(output_data_path)
+
                         processing_results.append(
                             {
                                 "video_name": video.name,
                                 "output_video": output_video_path,
-                                "data_file": output_data_path,
+                                "data_file": "включено в общий файл",
                                 "status": "Успешно",
                             }
                         )
 
-                        # Очистка временных файлов
                         if processing_path != temp_video_path:
                             os.unlink(processing_path)
 
@@ -290,7 +418,25 @@ with batch_tab:
 
                     progress_indicator.progress((index + 1) / len(multiple_videos))
 
-                # Отчет о результатах
+                combined_data_path = os.path.join(
+                    data_results_dir, "combined_analysis_data.csv"
+                )
+                if combined_data:
+                    final_combined_data = pd.concat(combined_data, ignore_index=True)
+                    final_combined_data.to_csv(combined_data_path, index=False)
+
+                    bubble_stats, overall_stats = analyze_bubble_statistics(
+                        combined_data_path
+                    )
+
+                    if not bubble_stats.empty:
+                        report_name = f"batch_report_{batch_folder_name}"
+                        stats_csv_path, overall_stats_path, report_path = (
+                            save_statistics_report(
+                                bubble_stats, overall_stats, main_dir, report_name
+                            )
+                        )
+
                 successful_processing = len(
                     [r for r in processing_results if r["status"] == "Успешно"]
                 )
@@ -302,13 +448,40 @@ with batch_tab:
                 results_table = pd.DataFrame(processing_results)
                 st.dataframe(results_table)
 
-                # Показ структуры папок
-                st.info("### Структура созданных папок:")
-                st.code(
-                    f"""
-{batch_folder_name}/
-├── processed_videos/      # Обработанные видеофайлы
-├── analysis_data/         # CSV файлы с данными
-└── statistics_charts/     # Графики и гистограммы
-                """
-                )
+                if combined_data and os.path.exists(combined_data_path):
+                    st.success("### Анализ статистики пузырьков")
+
+                    if not bubble_stats.empty:
+                        st.info("### Детальная статистика по пузырькам:")
+                        st.dataframe(bubble_stats)
+
+                        st.info("### Общая статистика по всем пузырькам:")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Всего пузырьков", overall_stats["total_bubbles"])
+                            st.metric(
+                                "Среднее время жизни",
+                                f"{overall_stats['avg_lifetime']:.2f} сек",
+                            )
+                            st.metric(
+                                "Стд. время жизни",
+                                f"{overall_stats['std_lifetime']:.2f} сек",
+                            )
+                        with col2:
+                            st.metric(
+                                "Средняя площадь",
+                                f"{overall_stats['avg_area_all']:.1f} px²",
+                            )
+                            st.metric(
+                                "Макс. скорость",
+                                f"{overall_stats['max_speed_all']:.1f} px/сек",
+                            )
+                        with col3:
+                            st.metric(
+                                "Средняя скорость",
+                                f"{overall_stats['avg_speed_all']:.1f} px/сек",
+                            )
+                            st.metric(
+                                "Скорость (без нулей)",
+                                f"{overall_stats['avg_nonzero_speed_all']:.1f} px/сек",
+                            )
