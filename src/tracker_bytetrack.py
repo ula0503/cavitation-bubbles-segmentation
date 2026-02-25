@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 import math
 
+
 def iou(bbox1, bbox2):
     """
     Вычисляет IoU (Intersection over Union) для двух bounding box.
@@ -22,11 +23,11 @@ def iou(bbox1, bbox2):
 
 class KalmanBoxTracker:
     """
-    Отслеживает отдельный объект с использованием полноценного Калмана.
+    Отслеживает отдельный объект с использованием Калмана.
     Состояние: [x, y, s, r, vx, vy, vs]
       x, y – координаты центра,
       s – площадь (масштаб),
-      r – соотношение сторон (предполагается относительно стабильным),
+      r – соотношение сторон,
       vx, vy, vs – скорости соответствующих параметров.
     """
 
@@ -51,13 +52,13 @@ class KalmanBoxTracker:
 
         # Инициализируем состояние: [x, y, s, r, vx, vy, vs]
         self.state = np.array([x, y, s, r, 0, 0, 0], dtype=np.float32)
-        # Начальная ковариация. Допустим, относительно точны координаты, но неопределенность в площади и особенно в скорости больше.
+
+        # Начальная ковариация
         self.P = np.diag([10, 10, 100, 10, 1000, 1000, 1000]).astype(np.float32)
 
-        # Шаг времени по умолчанию (если не задан динамически) — 1 единица (1 кадр)
+        # Шаг времени по умолчанию
         dt = 1.0
-        # Матрица перехода состояния F для модели постоянной скорости.
-        # В дальнейшем будем обновлять компоненты, зависящие от dt.
+        # Матрица перехода состояния F для модели постоянной скорости
         self.F = np.array(
             [
                 [1, 0, 0, 0, dt, 0, 0],
@@ -71,7 +72,7 @@ class KalmanBoxTracker:
             dtype=np.float32,
         )
 
-        # Матрица наблюдения H (мы измеряем только [x, y, s, r])
+        # Матрица наблюдения H (измеряем только [x, y, s, r])
         self.H = np.array(
             [
                 [1, 0, 0, 0, 0, 0, 0],
@@ -82,49 +83,57 @@ class KalmanBoxTracker:
             dtype=np.float32,
         )
 
-        # Матрица шума процесса Q — увеличим шум для скоростных компонент.
+        # Матрица шума процесса Q
         self.Q = np.diag([0.1, 0.1, 0.1, 0.001, 50, 50, 50]).astype(np.float32)
-        # Матрица шума измерения R — предполагаем, что измерения x, y относительно точны, площадь менее точна.
+
+        # Матрица шума измерения R
         self.R = np.diag([0.5, 0.5, 10, 0.01]).astype(np.float32)
 
         self.frame_idx = frame_idx
         self.timestamp = timestamp
         self.time_since_update = 0
-        self.history = [bbox]
+        self.history = [bbox]  # История содержит bbox напрямую
         self.detection = detection
+
+    def _update_transition_matrix(self, dt):
+        """Обновление матрицы перехода с новым dt"""
+        self.F[0, 4] = dt
+        self.F[1, 5] = dt
+        self.F[2, 6] = dt
 
     def predict(self, dt=None):
         """
         Выполняет предсказание нового состояния.
         Если dt не задан, предполагаем dt = 1.0.
-        Если задан, обновляем матрицу перехода F.
         """
         if dt is None:
             dt = 1.0
-        # Обновляем dt в матрице перехода F
-        self.F[0, 4] = dt
-        self.F[1, 5] = dt
-        self.F[2, 6] = dt
+
+        # Обновляем матрицу перехода F с новым dt
+        self._update_transition_matrix(dt)
 
         self.state = np.dot(self.F, self.state)
         self.P = np.dot(np.dot(self.F, self.P), self.F.T) + self.Q
         self.time_since_update += 1
-        return self.get_state()
+
+        # Предсказанный bbox добавляем в историю
+        predicted_bbox = self.get_state()
+        self.history.append(predicted_bbox)
+
+        return predicted_bbox
 
     def update(self, bbox, frame_idx, timestamp, detection=None):
         """
-        Обновление состояния по новой детекции с использованием стандартного уравнения Калмана.
+        Обновление состояния по новой детекции.
         dt рассчитывается как разница между текущей временной меткой и предыдущей.
         """
-        # Рассчитываем dt по времени между текущей и предыдущей детекцией.
+        # Рассчитываем dt по времени между текущей и предыдущей детекцией
         dt = timestamp - self.timestamp if self.timestamp is not None else 1.0
         if dt <= 0:
             dt = 1.0
 
         # Обновляем матрицу перехода F с учетом dt
-        self.F[0, 4] = dt
-        self.F[1, 5] = dt
-        self.F[2, 6] = dt
+        self._update_transition_matrix(dt)
 
         # Преобразуем bbox в измерение: [x, y, s, r]
         x1, y1, x2, y2 = bbox
@@ -151,13 +160,12 @@ class KalmanBoxTracker:
         self.time_since_update = 0
         self.frame_idx = frame_idx
         self.timestamp = timestamp
-        self.history.append(bbox)
+        self.history.append(bbox)  # Добавляем bbox в историю
         self.detection = detection
 
     def get_state(self):
         """
         Возвращает текущий bbox в формате [x1, y1, x2, y2] на основании текущего состояния.
-        Производится защита от отрицательных значений для s и r.
         """
         x, y, s, r = self.state[0:4]
         s = max(s, 1e-6)
@@ -182,11 +190,11 @@ class ByteTracker:
     ):
         """
         Инициализация ByteTracker.
-          - high_thresh: порог для высокодоверенных детекций.
-          - low_thresh: порог для низкодоверенных детекций.
-          - max_time_lost: число кадров, в течение которых трек может оставаться без обновления.
-          - iou_threshold: порог IoU для сопоставления детекций с треками.
-          - distance_threshold: максимальное допустимое расстояние между центрами bbox для сопоставления.
+          - high_thresh: порог для высокодоверенных детекций
+          - low_thresh: порог для низкодоверенных детекций
+          - max_time_lost: число кадров, в течение которых трек может оставаться без обновления
+          - iou_threshold: порог IoU для сопоставления детекций с треками
+          - distance_threshold: максимальное расстояние между центрами bbox для сопоставления
         """
         self.high_thresh = high_thresh
         self.low_thresh = low_thresh
@@ -229,6 +237,7 @@ class ByteTracker:
             if dt <= 0:
                 dt = 1.0
             tracker.predict(dt)
+
         predicted_boxes = (
             np.array([tracker.get_state() for tracker in self.trackers])
             if self.trackers
@@ -324,8 +333,7 @@ class ByteTracker:
         unmatched_trackers = []
         unmatched_detections = []
 
-        # Для каждой пары (tracker, детекция) проверяем, если либо IoU достаточно высокое,
-        # либо центры bbox близки (евклидово расстояние меньше distance_threshold), то считаем их совпадающими.
+        # Для каждой пары (tracker, детекция) проверяем критерий
         for t, d in zip(row_indices, col_indices):
             tb = trackers_boxes[t]
             db = detections_boxes[d]
@@ -348,4 +356,5 @@ class ByteTracker:
         for d in range(detections_boxes.shape[0]):
             if d not in col_indices:
                 unmatched_detections.append(d)
+
         return matches, unmatched_trackers, unmatched_detections
