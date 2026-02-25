@@ -25,6 +25,9 @@ def draw_mask(frame, mask, color, border_width=2, line_type=cv2.LINE_AA):
     Обводка с дополнительными настройками.
     line_type=cv2.LINE_AA - сглаженные линии
     """
+    if mask is None or mask.size == 0:
+        return frame
+
     mask = mask.astype(np.uint8)
     if mask.shape[:2] != frame.shape[:2]:
         mask = cv2.resize(
