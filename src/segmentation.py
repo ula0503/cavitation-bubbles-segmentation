@@ -1,41 +1,49 @@
-import cv2
+"""YOLO-based segmentation module for bubble detection."""
+
+from typing import List, Dict, Optional, Any
 import numpy as np
 from ultralytics import YOLO
 
 
 class YoloSegmenter:
-    def __init__(self, model_path: str):
-        """
-        Инициализация модели сегментации.
-        model_path – путь к файлу модели.
-        """
-        self.model = YOLO(model_path)  # Загружаем модель через ultralytics
+    """YOLO segmenter for bubble detection in video frames."""
 
-    def segment_frame(self, frame: np.ndarray) -> list:
+    def __init__(self, model_path: str) -> None:
+        """Initialize YOLO segmentation model.
+
+        Args:
+            model_path: Path to YOLO model weights file.
         """
-        Обрабатывает один кадр и возвращает список детекций.
-        Каждая детекция – словарь с ключами:
-            'bbox': [x1, y1, x2, y2],
-            'mask': np.ndarray бинарная маска (значения 0 или 1),
-            'class': int (0 – пузырь в фокусе, 1 – пузырь вне фокуса),
-            'confidence': float
+        self.model = YOLO(model_path)
+
+    def segment_frame(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """Process a single frame and return detections.
+
+        Args:
+            frame: Input image frame (BGR format).
+
+        Returns:
+            List of detection dictionaries with keys:
+                - bbox: [x1, y1, x2, y2] bounding box coordinates
+                - mask: Binary mask as np.ndarray (0 or 1 values)
+                - class: Integer class ID (0: in focus, 1: out of focus)
+                - confidence: Detection confidence score
         """
+        # Run inference
         results = self.model(
             frame,
-            conf=0.30,  # Порог уверенности детекции
-            iou=0.40,  # Порог IoU для NMS
-            imgsz=1280,  # Размер изображения для инференса
-            retina_masks=True,  # высококачественные маски
-            agnostic_nms=False,
-        )  # Разделять классы при NMS
-        # Выполняем инференс для одного кадра
-        result = results[
-            0
-        ]  # При обработке одного кадра возвращается список из одного результата
+            conf=0.15,  # Confidence threshold
+            iou=0.30,  # IoU threshold for NMS
+            imgsz=1280,  # Inference image size
+            retina_masks=True,  # High-quality masks
+            agnostic_nms=False,  # Separate classes for NMS
+        )
 
+        # Get first result (single frame)
+        result = results[0]
         detections = []
 
-        # Извлекаем bounding boxes, оценки и классы
+        # Extract bounding boxes, scores, and classes
         if result.boxes is not None:
             boxes = result.boxes.xyxy.cpu().numpy()  # shape: (n, 4)
             scores = result.boxes.conf.cpu().numpy()  # shape: (n,)
@@ -43,18 +51,25 @@ class YoloSegmenter:
         else:
             boxes, scores, classes = [], [], []
 
-        # Извлекаем маски (если модель обучена на segmentation)
+        # Extract masks if available
         if result.masks is not None:
-            # result.masks.data имеет размер (n, height, width) – значения от 0 до 1
+            # Masks shape: (n, height, width) with values 0-1
             masks = result.masks.data.cpu().numpy()
         else:
             masks = [None] * len(boxes)
 
+        # Build detection dictionaries
         for i, bbox in enumerate(boxes):
             mask = masks[i] if i < len(masks) else None
+
+            # Convert mask to binary if exists
+            binary_mask = None
+            if mask is not None:
+                binary_mask = (mask > 0.5).astype(np.uint8)
+
             detection = {
                 "bbox": bbox.tolist(),
-                "mask": (mask > 0.5).astype(np.uint8) if mask is not None else None,
+                "mask": binary_mask,
                 "class": int(classes[i]),
                 "confidence": float(scores[i]),
             }

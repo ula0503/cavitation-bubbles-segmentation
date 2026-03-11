@@ -2,4 +2,7 @@ __pycache__/
 cavitation_env/
 video_results/
 *.pt
-.env
+.envbatch_processing/
+video_results/
+*.mp4
+temp_*

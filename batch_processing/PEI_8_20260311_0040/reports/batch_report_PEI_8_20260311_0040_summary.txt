@@ -1,0 +1,16 @@
+CAVITATION BUBBLES TRACKING REPORT
+====================================
+
+Total bubbles tracked: 10
+Average lifetime: 0.70 sec
+Lifetime std deviation: 0.63 sec
+Average area: 14964.8 px²
+Average speed: 112.1 px/sec
+Average speed (non-zero): 224.3 px/sec
+Maximum speed: 295.2 px/sec
+Average path length: 44.7 px
+Average straightness: 1.000
+Average confidence: 0.693
+Total tracked frames: 22
+
+Report generated: 2026-03-11 00:47:52

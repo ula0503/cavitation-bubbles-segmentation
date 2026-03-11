@@ -1,0 +1,2 @@
+total_bubbles,avg_lifetime,std_lifetime,avg_area_all,avg_speed_all,avg_nonzero_speed_all,max_speed_all,avg_path_length,avg_straightness,avg_confidence,total_tracked_frames
+136,0.8935882352941178,1.6607319201711581,4955.762022058823,211.26490441176472,317.11963235294115,2310.143,77.38832352941176,1.0,0.6762058823529412,76
